@@ -1,0 +1,21 @@
+# Gradle
+.gradle/
+build/
+app/build/
+
+# Android Studio
+.idea/
+*.iml
+local.properties
+.DS_Store
+captures/
+.externalNativeBuild/
+.cxx/
+
+# ملفات الموديل الكبيرة (ارفعها بطريقة تانية لو حجمها زاد عن حد GitHub)
+# شيل السطر ده لو عايز ترفع الموديل عادي في الريبو
+# app/src/main/assets/*.onnx
+
+# ملفات محلية
+*.keystore
+*.jks
