@@ -13,7 +13,7 @@ class OnnxModel(context: Context, assetName: String) : AutoCloseable {
     }
 
     fun predict(input: FloatArray): FloatArray {
-        val tensor = OnnxTensor.createTensor(env, FloatBuffer.wrap(input), longArrayOf(1, 20, FeatureExtractor.FEATURE_DIM))
+        val tensor = OnnxTensor.createTensor(env, FloatBuffer.wrap(input), longArrayOf(1, 20, FeatureExtractor.FEATURE_DIM.toLong()))
         tensor.use {
             session.run(mapOf(session.inputNames.first() to tensor)).use { result ->
                 val v = result[0].value
