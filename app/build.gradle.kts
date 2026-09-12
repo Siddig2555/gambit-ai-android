@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "com.yourname.gambitai"
+    namespace = "com.gambitai"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.yourname.gambitai"
+        applicationId = "com.gambitai"
         minSdk = 26
         targetSdk = 35
         versionCode = 1
