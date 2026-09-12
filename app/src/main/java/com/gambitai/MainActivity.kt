@@ -16,6 +16,7 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        CrashLogger(this).install()
         engine = V12LiteEngine(this)
         engine.loadModels()
 
