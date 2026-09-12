@@ -55,6 +55,7 @@ class MainActivity : Activity() {
         CrashLogger(this).install()
         engine = V12LiteEngine(this)
         engine.loadModels()
+        engine.loadState()
         loadHistory()
 
         val root = LinearLayout(this).apply {

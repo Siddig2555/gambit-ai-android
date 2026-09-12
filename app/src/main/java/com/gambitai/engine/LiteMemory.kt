@@ -22,4 +22,22 @@ class LiteMemory(private val capacity: Int = 300) {
         }
         return scores
     }
+
+    fun serialize(): String = entries.joinToString("\n") { e ->
+        "${e.history.joinToString(",")}#${e.predicted}#${e.actual}#${e.confidence}"
+    }
+
+    fun restore(data: String) {
+        entries.clear()
+        if (data.isBlank()) return
+        data.lines().forEach { line ->
+            if (line.isBlank()) return@forEach
+            val parts = line.split("#")
+            if (parts.size == 4) {
+                val hist = if (parts[0].isBlank()) emptyList() else parts[0].split(",")
+                val conf = parts[3].toDoubleOrNull() ?: 1.0
+                entries.addLast(MemoryEntry(hist, parts[1], parts[2], conf))
+            }
+        }
+    }
 }

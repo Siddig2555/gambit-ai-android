@@ -20,4 +20,21 @@ class Fingerprint(private val depth: Int = 5) {
         }
         return null
     }
+
+    fun serialize(): String = table.entries.joinToString("\n") { (k, v) ->
+        "$k#${v.joinToString(",")}"
+    }
+
+    fun restore(data: String) {
+        table.clear()
+        if (data.isBlank()) return
+        data.lines().forEach { line ->
+            if (line.isBlank()) return@forEach
+            val parts = line.split("#")
+            if (parts.size == 2) {
+                val counts = parts[1].split(",").map { it.toIntOrNull() ?: 0 }.toIntArray()
+                table[parts[0]] = counts
+            }
+        }
+    }
 }

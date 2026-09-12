@@ -35,4 +35,22 @@ class HallOfFailures(private val capacity: Int = 500) {
             .take(n)
             .joinToString(" | ") { "'${it.pattern}'→'${it.wrong}'(×${it.count})" }
     }
+
+    fun serialize(): String = failures.joinToString("\n") { f ->
+        "${f.pattern}#${f.wrong}#${f.timestamp}#${f.count}"
+    }
+
+    fun restore(data: String) {
+        failures.clear()
+        if (data.isBlank()) return
+        data.lines().forEach { line ->
+            if (line.isBlank()) return@forEach
+            val parts = line.split("#")
+            if (parts.size == 4) {
+                val ts = parts[2].toLongOrNull() ?: System.currentTimeMillis()
+                val cnt = parts[3].toIntOrNull() ?: 1
+                failures.addLast(Failure(parts[0], parts[1], ts, cnt))
+            }
+        }
+    }
 }

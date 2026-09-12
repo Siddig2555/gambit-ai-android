@@ -1,7 +1,7 @@
 package com.gambitai.engine
 
 import android.content.Context
-import kotlin.math.abs
+import java.io.File
 import kotlin.math.exp
 
 data class Prediction(
@@ -25,6 +25,17 @@ class EngineStats {
     val topAccuracy: Double get() = if (total == 0) 0.0 else correct.toDouble() / total * 100.0
     val top4Accuracy: Double get() = if (total == 0) 0.0 else correctTop4.toDouble() / total * 100.0
     fun reset() { total = 0; correct = 0; correctTop4 = 0 }
+
+    fun serialize(): String = "$total,$correct,$correctTop4"
+    fun restore(data: String) {
+        if (data.isBlank()) return
+        val parts = data.trim().split(",")
+        if (parts.size == 3) {
+            total = parts[0].toIntOrNull() ?: 0
+            correct = parts[1].toIntOrNull() ?: 0
+            correctTop4 = parts[2].toIntOrNull() ?: 0
+        }
+    }
 }
 
 class V12LiteEngine(private val context: Context) {
@@ -40,6 +51,8 @@ class V12LiteEngine(private val context: Context) {
     private var lstm: OnnxModel? = null
     private var transformer: OnnxModel? = null
     private var dynamic: OnnxModel? = null
+
+    private val stateFile: File get() = File(context.filesDir, "engine_state.txt")
 
     fun loadModels() {
         closeModels()
@@ -57,6 +70,55 @@ class V12LiteEngine(private val context: Context) {
     fun shieldCount(): Int = hall.size()
     fun hallStats(): String = hall.topStats()
     fun graphTopAfter(last: String): List<Pair<String, Double>> = graph.topSymbols(last)
+
+    private val sectionMarkers = listOf("MEMORY", "FINGERPRINT", "HALL", "GRAPH", "JOKER", "STATS")
+
+    fun saveState() {
+        try {
+            val sb = StringBuilder()
+            sb.append("##MEMORY##\n").append(memory.serialize()).append("\n")
+            sb.append("##FINGERPRINT##\n").append(fingerprint.serialize()).append("\n")
+            sb.append("##HALL##\n").append(hall.serialize()).append("\n")
+            sb.append("##GRAPH##\n").append(graph.serialize()).append("\n")
+            sb.append("##JOKER##\n").append(joker.serialize()).append("\n")
+            sb.append("##STATS##\n").append(stats.serialize()).append("\n")
+            stateFile.writeText(sb.toString(), Charsets.UTF_8)
+        } catch (e: Exception) {
+        }
+    }
+
+    fun loadState() {
+        try {
+            if (!stateFile.exists()) return
+            val text = stateFile.readText(Charsets.UTF_8)
+            val sections = splitSections(text)
+            sections["MEMORY"]?.let { memory.restore(it) }
+            sections["FINGERPRINT"]?.let { fingerprint.restore(it) }
+            sections["HALL"]?.let { hall.restore(it) }
+            sections["GRAPH"]?.let { graph.restore(it) }
+            sections["JOKER"]?.let { joker.restore(it) }
+            sections["STATS"]?.let { stats.restore(it) }
+        } catch (e: Exception) {
+        }
+    }
+
+    private fun splitSections(text: String): Map<String, String> {
+        val result = HashMap<String, String>()
+        var current: String? = null
+        val buffer = StringBuilder()
+        text.lines().forEach { line ->
+            val marker = sectionMarkers.find { line.trim() == "##$it##" }
+            if (marker != null) {
+                if (current != null) result[current!!] = buffer.toString().trimEnd('\n')
+                current = marker
+                buffer.clear()
+            } else if (current != null) {
+                buffer.append(line).append("\n")
+            }
+        }
+        if (current != null) result[current!!] = buffer.toString().trimEnd('\n')
+        return result
+    }
 
     fun predict(history: List<String>, hot: String? = null): Prediction {
         require(history.isNotEmpty()) { "History cannot be empty" }
@@ -173,6 +235,8 @@ class V12LiteEngine(private val context: Context) {
         stats.total++
         if (wasCorrect) stats.correct++
         if (inTop4) stats.correctTop4++
+
+        saveState()
     }
 
     fun trainingFilePath(): String = store.path()

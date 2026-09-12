@@ -44,4 +44,15 @@ class JokerObserver(private val graph: RelationGraph) {
         confidence += if (wasCorrect) 0.01 else -0.005
         confidence = confidence.coerceIn(0.0, 0.5)
     }
+
+    fun serialize(): String = "$confidence,$internalState"
+
+    fun restore(data: String) {
+        if (data.isBlank()) return
+        val parts = data.trim().split(",")
+        if (parts.size == 2) {
+            confidence = parts[0].toDoubleOrNull() ?: 0.1
+            internalState = parts[1].toDoubleOrNull() ?: 0.0
+        }
+    }
 }

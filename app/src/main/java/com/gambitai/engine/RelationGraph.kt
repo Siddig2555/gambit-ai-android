@@ -33,4 +33,16 @@ class RelationGraph {
         return row.indices.sortedByDescending { row[it] }.take(n)
             .filter { row[it] > 0 }.map { Symbols.keys[it] to row[it] }
     }
+
+    fun serialize(): String = matrix.joinToString("\n") { row -> row.joinToString(",") }
+
+    fun restore(data: String) {
+        if (data.isBlank()) return
+        val lines = data.lines().filter { it.isNotBlank() }
+        lines.forEachIndexed { i, line ->
+            if (i >= matrix.size) return@forEachIndexed
+            val vals = line.split(",").map { it.toDoubleOrNull() ?: 0.0 }
+            for (j in vals.indices) { if (j < matrix[i].size) matrix[i][j] = vals[j] }
+        }
+    }
 }
