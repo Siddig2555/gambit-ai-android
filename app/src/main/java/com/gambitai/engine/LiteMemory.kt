@@ -5,6 +5,8 @@ data class MemoryEntry(val history: List<String>, val predicted: String, val act
 class LiteMemory(private val capacity: Int = 300) {
     private val entries = ArrayDeque<MemoryEntry>()
 
+    fun size(): Int = entries.size
+
     fun add(e: MemoryEntry) {
         if (entries.size >= capacity) entries.removeFirst()
         entries.addLast(e)

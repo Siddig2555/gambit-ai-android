@@ -26,4 +26,13 @@ class HallOfFailures(private val capacity: Int = 500) {
                 it.count * exp(-days / 7.0)
             }
     }
+
+    fun size(): Int = failures.size
+
+    fun topStats(n: Int = 3): String {
+        if (failures.isEmpty()) return "لا توجد بيانات بعد"
+        return failures.sortedByDescending { it.count }
+            .take(n)
+            .joinToString(" | ") { "'${it.pattern}'→'${it.wrong}'(×${it.count})" }
+    }
 }

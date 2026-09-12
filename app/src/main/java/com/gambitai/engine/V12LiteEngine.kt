@@ -1,6 +1,7 @@
 package com.gambitai.engine
 
 import android.content.Context
+import kotlin.math.abs
 import kotlin.math.exp
 
 data class Prediction(
@@ -10,14 +11,31 @@ data class Prediction(
     val probabilities: FloatArray,
     val entropy: Double,
     val cyclePrediction: String?,
-    val fingerprintPrediction: String?
+    val fingerprintPrediction: String?,
+    val memorySupport: Map<String, Double> = emptyMap(),
+    val agreement: Double = 0.0,
+    val bypassActive: Boolean = false,
+    val jokerActive: Boolean = false
 )
+
+class EngineStats {
+    var total = 0
+    var correct = 0
+    var correctTop4 = 0
+    val topAccuracy: Double get() = if (total == 0) 0.0 else correct.toDouble() / total * 100.0
+    val top4Accuracy: Double get() = if (total == 0) 0.0 else correctTop4.toDouble() / total * 100.0
+    fun reset() { total = 0; correct = 0; correctTop4 = 0 }
+}
 
 class V12LiteEngine(private val context: Context) {
     private val memory = LiteMemory()
     private val fingerprint = Fingerprint()
     private val hall = HallOfFailures()
     private val store = TrainingDataStore(context)
+    val graph = RelationGraph()
+    val joker = JokerObserver(graph)
+    private val biasDetector = FrequencyBiasDetector()
+    val stats = EngineStats()
 
     private var lstm: OnnxModel? = null
     private var transformer: OnnxModel? = null
@@ -29,72 +47,132 @@ class V12LiteEngine(private val context: Context) {
         lstm = tryLoad("lstm.onnx")
         transformer = tryLoad("transformer.onnx")
         dynamic = tryLoad("dynamic.onnx")
+        if (lstm == null && transformer == null && dynamic == null) {
+            lstm = tryLoad("model.onnx")
+        }
     }
+
+    fun neuralExpertsLoaded(): Int = listOfNotNull(lstm, transformer, dynamic).size
+    fun memoryCount(): Int = memory.size()
+    fun shieldCount(): Int = hall.size()
+    fun hallStats(): String = hall.topStats()
+    fun graphTopAfter(last: String): List<Pair<String, Double>> = graph.topSymbols(last)
 
     fun predict(history: List<String>, hot: String? = null): Prediction {
         require(history.isNotEmpty()) { "History cannot be empty" }
         val input = FeatureExtractor.sequence(history)
-        val outputs = listOfNotNull(lstm, transformer, dynamic).mapNotNull { runCatching { it.predict(input) }.getOrNull() }
+        val expertOutputs = listOfNotNull(lstm, transformer, dynamic)
+            .mapNotNull { runCatching { it.predict(input) }.getOrNull() }
 
         val scores = DoubleArray(Symbols.keys.size) { 1.0 }
-        if (outputs.isNotEmpty()) {
-            outputs.forEach { out ->
+        if (expertOutputs.isNotEmpty()) {
+            expertOutputs.forEach { out ->
                 val n = minOf(out.size, scores.size)
                 for (i in 0 until n) scores[i] += out[i].toDouble()
             }
         } else {
-            // Safe fallback when models are not yet installed.
             history.takeLast(20).forEach { s ->
                 val i = Symbols.keys.indexOf(s)
                 if (i >= 0) scores[i] += 0.15
             }
         }
 
-        memory.vote(history).forEach { (s,v) ->
-            val i = Symbols.keys.indexOf(s); if (i >= 0) scores[i] += 0.25 * v
-        }
-        CycleDetector.predict(history)?.let { s ->
-            val i = Symbols.keys.indexOf(s); if (i >= 0) scores[i] += 0.5
-        }
-        fingerprint.predict(history)?.let { s ->
-            val i = Symbols.keys.indexOf(s); if (i >= 0) scores[i] += 0.5
+        val last = history.last()
+        joker.observeRhythm(history)
+
+        val memoryVotes = memory.vote(history)
+        val memorySupport = HashMap<String, Double>()
+        val memTotal = memoryVotes.values.sum().coerceAtLeast(1.0)
+        memoryVotes.forEach { (s, v) ->
+            val i = Symbols.keys.indexOf(s)
+            if (i >= 0) { scores[i] += 0.25 * v; memorySupport[s] = v / memTotal }
         }
 
-        Symbols.keys.forEachIndexed { i,s -> scores[i] -= hall.penalty(history,s) * 0.15 }
+        val cyclePick = CycleDetector.predict(history)
+        cyclePick?.let { s -> val i = Symbols.keys.indexOf(s); if (i >= 0) scores[i] += 0.5 }
+
+        val fpPick = fingerprint.predict(history)
+        fpPick?.let { s -> val i = Symbols.keys.indexOf(s); if (i >= 0) scores[i] += 0.5 }
+
+        val graphDist = graph.distribution(last)
+        graphDist.forEach { (s, p) ->
+            val i = Symbols.keys.indexOf(s); if (i >= 0) scores[i] += p * 1.0
+        }
+
+        val jokerBias = joker.subtleBias(last)
+        jokerBias.forEach { (s, b) ->
+            val i = Symbols.keys.indexOf(s); if (i >= 0) scores[i] += b
+        }
+
+        val freqBias = biasDetector.bias(history)
+        freqBias.forEach { (s, b) ->
+            val i = Symbols.keys.indexOf(s); if (i >= 0) scores[i] += b * 0.3
+        }
+
+        Symbols.keys.forEachIndexed { i, s -> scores[i] -= hall.penalty(history, s) * 0.15 }
 
         val rep = FeatureExtractor.repetition(history)
         if (rep > 0.55) {
-            val last = history.last()
             val i = Symbols.keys.indexOf(last)
             if (i >= 0) scores[i] += 0.20
         }
 
+        val entropyVal = FeatureExtractor.entropy(history)
+        val bypassActive = entropyVal > 1.8
+
         val max = scores.maxOrNull() ?: 1.0
-        val exps = scores.map { exp((it-max).coerceAtLeast(-20.0)) }
+        val exps = scores.map { exp((it - max).coerceAtLeast(-20.0)) }
         val sum = exps.sum().coerceAtLeast(1e-9)
-        val probs = exps.map { (it/sum).toFloat() }.toFloatArray()
+        val probs = exps.map { (it / sum).toFloat() }.toFloatArray()
         val order = probs.indices.sortedByDescending { probs[it] }
         val top4 = order.take(4).map { Symbols.keys[it] }
-        val confidence = probs[order.first()].toDouble().coerceIn(0.0,1.0)
+        val confidence = probs[order.first()].toDouble().coerceIn(0.0, 1.0)
+
+        val picks = listOfNotNull(
+            cyclePick,
+            fpPick,
+            memoryVotes.maxByOrNull { it.value }?.key,
+            graphDist.maxByOrNull { it.value }?.key,
+            Symbols.keys[order.first()]
+        )
+        val agreement = if (picks.isEmpty()) 0.0 else
+            picks.groupingBy { it }.eachCount().values.max().toDouble() / picks.size
 
         return Prediction(
-            Symbols.keys[order.first()], top4, confidence, probs,
-            FeatureExtractor.entropy(history),
-            CycleDetector.predict(history),
-            fingerprint.predict(history)
+            symbol = Symbols.keys[order.first()],
+            top4 = top4,
+            confidence = confidence,
+            probabilities = probs,
+            entropy = entropyVal,
+            cyclePrediction = cyclePick,
+            fingerprintPrediction = fpPick,
+            memorySupport = memorySupport,
+            agreement = agreement,
+            bypassActive = bypassActive,
+            jokerActive = joker.isActive()
         )
     }
 
     fun completeRound(historyBefore: List<String>, hot: String?, p: Prediction, actual: String) {
+        val wasCorrect = p.symbol == actual
+        val inTop4 = actual in p.top4
+
         val r = TrainingRecord(
             System.currentTimeMillis(), historyBefore, hot, p.symbol, p.top4, actual,
-            p.confidence, p.symbol == actual, actual in p.top4, p.entropy,
+            p.confidence, wasCorrect, inTop4, p.entropy,
             FeatureExtractor.repetition(historyBefore), p.cyclePrediction, p.fingerprintPrediction
         )
         store.append(r)
         memory.add(MemoryEntry(historyBefore, p.symbol, actual, p.confidence))
         fingerprint.observe(historyBefore, actual)
         hall.record(historyBefore, p.symbol, actual)
+
+        if (historyBefore.isNotEmpty()) graph.update(historyBefore.last(), actual)
+        joker.updateWisdom(wasCorrect)
+
+        stats.total++
+        if (wasCorrect) stats.correct++
+        if (inTop4) stats.correctTop4++
     }
 
     fun trainingFilePath(): String = store.path()
